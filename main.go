@@ -1,67 +1,79 @@
+/*
+		DO NOT MAKE CHANGES WITHOUT TESTING.
+	    YOU WILL REGRET IT AGAIN.
+*/
 package main
 
+/*
+#include <stdlib.h>
+*/
+import "C"
+import "unsafe"
 import (
-	"path/filepath"
-
-	"C"
 	"encoding/json"
 	"fmt"
-	"github.com/adrg/frontmatter"
+	"gopkg.in/yaml.v2"
 	"os"
+	"strings"
 )
 
-type metadata struct {
-	Publish bool     `yaml:"publish"`
+type FrontMatter struct {
 	Title   string   `yaml:"title"`
-	Path    string   `yaml:"-"` /* manually set this field */
+	Publish bool     `yaml:"publish"`
 	Tags    []string `yaml:"tags"`
-}
-
-func getFile(path string) (*os.File, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	output, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	return output, nil
-}
-
-func processMetadata1(path string) (metadata, error) {
-	meta := metadata{}
-
-	path, err := filepath.Abs(path)
-	if err != nil {
-		fmt.Print("Error while resolving filepath: ", path)
-		return meta, err
-	}
-
-	file, err := getFile(path)
-	if err != nil {
-		fmt.Print("Error while retrieving file handle: ", err.Error())
-		return meta, err
-	}
-	defer file.Close()
-
-	/* fill meta with frontmatter */
-	_, err = frontmatter.Parse(file, &meta)
-	// handleFrontmatterParseError(path, err)
-
-	/* manually insert filepath */
-	meta.Path = path
-
-	/* convert to json */
-
-	return meta, nil
+	// Add other fields as needed
 }
 
 //export ProcessFrontmatter
-func ProcessFrontmatter(path string) *C.char {
-	a, _ := processMetadata1(path)
-	jso, _ := json.Marshal(a)
-	return C.CString(string(jso))
+func ProcessFrontmatter(filePath *C.char) *C.char {
+	a := C.GoString(filePath)
+
+	data, err := os.ReadFile(a)
+	if err != nil {
+		fmt.Println("Error reading file:", err)
+		return nil
+	}
+	frontMatterStart := 0
+	frontMatterEnd := 0
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if i == 0 && line == "---" {
+			fmt.Println("frontmatter detected")
+			frontMatterStart = i + 1
+		} else if frontMatterStart > 0 && line == "---" {
+			frontMatterEnd = i
+			break
+		}
+	}
+
+	if frontMatterStart == 0 || frontMatterEnd == 0 {
+		fmt.Println("No front matter found.")
+		return nil
+	}
+
+	frontMatterLines := lines[frontMatterStart:frontMatterEnd]
+	frontMatterString := strings.Join(frontMatterLines, "\n")
+
+	// 4. Parse YAML (or your chosen format)
+	var fm FrontMatter
+	err = yaml.Unmarshal([]byte(frontMatterString), &fm)
+	if err != nil {
+		fmt.Println("Error parsing YAML:", err)
+		return nil // Or return an error indicator
+	}
+
+	// // 5. Marshal the frontmatter back into a yaml string.
+	processedFrontMatter, err := json.Marshal(&fm)
+	if err != nil {
+		fmt.Println("Error marshalling frontmatter back to YAML", err)
+		return nil
+	}
+
+	cString := C.CString((string(processedFrontMatter)))
+	defer C.free(unsafe.Pointer(cString))
+	// defer C.free(unsafe.Pointer(filePath)) managed by the caller?
+	return cString
 }
 
 func main() {}
