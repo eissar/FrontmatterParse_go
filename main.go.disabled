@@ -1,0 +1,130 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/adrg/frontmatter"
+)
+
+func writeHost(msgs ...string) {
+	joinedString := strings.Join(msgs, ", ")
+	fmt.Fprintln(os.Stderr, joinedString)
+}
+
+func getFile(path string) (*os.File, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	output, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// region handleErrors
+func handleFrontmatterParseError(path string, err error) {
+	if err != nil {
+		writeHost("Error while parsing frontmatter at path:", path, err.Error())
+	}
+}
+
+//endregion
+
+type metadata struct {
+	Publish bool   `yaml:"publish"`
+	Path    string `yaml:"-"` /* manually set this field */
+}
+
+func processMetadata(path string) (metadata, error) {
+	meta := metadata{}
+
+	path, err := filepath.Abs(path)
+	if err != nil {
+		writeHost("Error while resolving filepath: ", path)
+		return meta, err
+	}
+
+	file, err := getFile(path)
+	if err != nil {
+		writeHost("Error while retrieving file handle: ", err.Error())
+		return meta, err
+	}
+	defer file.Close()
+
+	/* fill meta with frontmatter */
+	_, err = frontmatter.Parse(file, &meta)
+	handleFrontmatterParseError(path, err)
+
+	/* manually insert filepath */
+	meta.Path = path
+
+	/* convert to json */
+
+	return meta, nil
+}
+
+func isMarkdown(name string) bool {
+	if len(name) < 3 {
+		return false
+	}
+	if ".md" != name[len(name)-3:] {
+		return false
+	}
+	return true
+}
+
+func assertFileExists(filePath string) error {
+	// Use os.Stat to get file information
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file does not exist: %s", filePath)
+		}
+		return fmt.Errorf("error accessing file: %w", err) // Wrap the original error
+	}
+
+	// Make sure it's a regular file, not a directory
+	if !fileInfo.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", filePath)
+	}
+
+	return nil // No errors, file exists
+}
+
+func main() {
+	pathPtr := flag.String("filepath", "", "Path to directory")
+	flag.Parse()
+
+	//region resolve directory
+	if *pathPtr == "" {
+		panic("Filepath cannot be empty")
+	}
+	catalogPath, err := filepath.Abs(*pathPtr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error resolving path:", err)
+		return
+	}
+	assertFileExists(catalogPath)
+	//endregion
+
+	filesMetadata := []metadata{} /* slice of metadata with undefined length */
+
+	walkerFunction := func(fp string, d fs.DirEntry, err error) error {
+		if !isMarkdown(d.Name()) {
+			/* skip this one */
+			return nil
+		}
+		meta, _ := processMetadata(fp)
+		fmt.Printf("%+v\n", meta)
+		filesMetadata = append(filesMetadata, meta)
+		return nil
+	}
+	filepath.WalkDir(catalogPath, walkerFunction)
+}

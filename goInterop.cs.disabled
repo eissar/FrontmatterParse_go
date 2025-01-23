@@ -1,0 +1,7 @@
+using System;
+using System.Runtime.InteropServices;
+public class GoInterop
+{
+    [DllImport("go-frontmatter/FrontmatterParse.dll")]
+    public static extern IntPtr ProcessFrontmatter(string filePath);
+} 
